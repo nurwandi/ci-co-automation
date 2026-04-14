@@ -61,8 +61,8 @@ jobs:
           DOW=$(date -u +%u)
           if [ "$DOW" = "1" ] || [ "$DOW" = "5" ]; then
             echo "Monday/Friday — using alternate location"
-            echo "lat=-6.209077123779666" >> $GITHUB_OUTPUT
-            echo "lng=106.63438083176038" >> $GITHUB_OUTPUT
+            echo "lat=-6.2118931" >> $GITHUB_OUTPUT
+            echo "lng=106.8264782" >> $GITHUB_OUTPUT
             echo "label=Home (Mon/Fri)" >> $GITHUB_OUTPUT
           else
             echo "Tue-Thu — using default location"
@@ -89,11 +89,10 @@ jobs:
           path: error-*.png
           retention-days: 3
 
-      - name: Notify Telegram
+      - name: Notify Discord
         if: always()
         env:
-          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
           GEO_LABEL: ${{ steps.geo.outputs.label }}
           JOB_STATUS: ${{ job.status }}
           RUN_NUMBER: ${{ github.run_number }}
@@ -103,49 +102,52 @@ jobs:
           START_TIME: ${{ steps.timer.outputs.start }}
         run: |
           if [ "$JOB_STATUS" = "success" ]; then
-            EMOJI="✅"; LABEL="Successful"
+            EMOJI="✅"; LABEL="Successful"; COLOR=5763719
           elif [ "$JOB_STATUS" = "cancelled" ]; then
-            EMOJI="⚠️"; LABEL="Cancelled"
+            EMOJI="⚠️"; LABEL="Cancelled"; COLOR=16776960
           else
-            EMOJI="❌"; LABEL="Failed!"
+            EMOJI="❌"; LABEL="Failed!"; COLOR=15548997
           fi
 
           ELAPSED=$(( $(date +%s) - START_TIME ))
           DURATION="$(( ELAPSED / 60 ))m $(( ELAPSED % 60 ))s"
 
-          FAILURE_NOTE=""
+          FOOTER=""
           if [ "$JOB_STATUS" = "failure" ]; then
-            FAILURE_NOTE="⚠️ <b>Action Required:</b> Check error screenshot in artifacts."
+            FOOTER=',"footer":{"text":"⚠️ Action Required: Check error screenshot in artifacts."}'
           fi
 
-          NL=$'\n'
-          MSG="${EMOJI} <b>Clock Out ${LABEL}</b>${NL}"
-          MSG+="─────────────────${NL}"
-          MSG+="📋 <b>Details:</b>${NL}"
-          MSG+="• Workflow: Clock Out${NL}"
-          MSG+="• Status: ${JOB_STATUS}${NL}"
-          MSG+="• Date: ${CLOCK_TIME} WIB${NL}"
-          MSG+="• Run: #${RUN_NUMBER} (Attempt #${RUN_ATTEMPT})${NL}"
-          MSG+="${NL}"
-          MSG+="📍 Location: ${GEO_LABEL}${NL}"
-          MSG+="⏱ Duration: ${DURATION}${NL}"
-          if [ -n "$FAILURE_NOTE" ]; then
-            MSG+="${NL}${FAILURE_NOTE}${NL}"
-          fi
-          MSG+="${NL}🔗 <a href='${RUN_URL}'>View Run</a>"
+          JSON=$(cat <<EOF
+          {
+            "content": "<@710595837067264082>",
+            "embeds": [{
+              "title": "${EMOJI} Clock Out ${LABEL}",
+              "url": "${RUN_URL}",
+              "color": ${COLOR},
+              "fields": [
+                {"name": "Workflow", "value": "Clock Out", "inline": true},
+                {"name": "Status", "value": "${JOB_STATUS}", "inline": true},
+                {"name": "Date", "value": "${CLOCK_TIME} WIB", "inline": true},
+                {"name": "Run", "value": "#${RUN_NUMBER} (Attempt #${RUN_ATTEMPT})", "inline": true},
+                {"name": "Location", "value": "${GEO_LABEL}", "inline": true},
+                {"name": "Duration", "value": "${DURATION}", "inline": true}
+              ]
+              ${FOOTER}
+            }]
+          }
+          EOF
+          )
 
           RESPONSE=$(curl -s -w "\n%{http_code}" -X POST \
-            "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
-            -d chat_id="${TELEGRAM_CHAT_ID}" \
-            -d parse_mode="HTML" \
-            -d disable_web_page_preview="true" \
-            --data-urlencode "text=${MSG}")
+            -H "Content-Type: application/json" \
+            -d "$JSON" \
+            "$DISCORD_WEBHOOK_URL")
 
           HTTP_CODE=$(echo "$RESPONSE" | tail -1)
           BODY=$(echo "$RESPONSE" | sed '$d')
 
-          if [ "$HTTP_CODE" != "200" ]; then
-            echo "::warning::Telegram notification failed (HTTP ${HTTP_CODE}): ${BODY}"
+          if [ "$HTTP_CODE" != "204" ] && [ "$HTTP_CODE" != "200" ]; then
+            echo "::warning::Discord notification failed (HTTP ${HTTP_CODE}): ${BODY}"
           else
-            echo "Telegram notification sent successfully"
+            echo "Discord notification sent successfully"
           fi

@@ -8,6 +8,9 @@ jobs:
     if: github.event_name == 'workflow_dispatch' || vars.CRON_ENABLED == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    permissions:
+      id-token: write
+      contents: read
     env:
       TALENTA_EMAIL: ${{ secrets.TALENTA_EMAIL }}
       TALENTA_PASSWORD: ${{ secrets.TALENTA_PASSWORD }}

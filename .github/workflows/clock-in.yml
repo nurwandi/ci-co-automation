@@ -77,15 +77,20 @@ jobs:
       - name: Wait for exit node and route traffic
         run: |
           echo "Waiting for exit node to appear..."
-          for i in $(seq 1 30); do
-            if tailscale status | grep -q "ci-exit-node"; then
-              echo "Exit node found"
+          for i in $(seq 1 60); do
+            EXIT_NODE=$(tailscale status | grep "ci-exit-node" | grep "offers exit node" | grep -v "offline" | awk '{print $2}' | head -1)
+            if [ -n "$EXIT_NODE" ]; then
+              echo "Exit node found: $EXIT_NODE"
               break
             fi
-            echo "Attempt $i/30 — waiting 5s..."
+            echo "Attempt $i/60 — waiting 5s..."
             sleep 5
           done
-          sudo -E tailscale set --exit-node=ci-exit-node --accept-routes
+          if [ -z "$EXIT_NODE" ]; then
+            echo "::error::Exit node not found after 5 minutes"
+            exit 1
+          fi
+          sudo -E tailscale set --exit-node="$EXIT_NODE" --accept-routes
 
       - name: Verify IP location
         run: curl -s https://ipinfo.io/json | jq '{ip, city, region, country}'

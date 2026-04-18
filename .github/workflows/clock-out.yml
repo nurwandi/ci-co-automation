@@ -48,17 +48,19 @@ jobs:
       - name: Launch exit node (spot)
         id: ec2
         run: |
-          USERDATA=$(echo "TS_AUTHKEY=${{ secrets.TS_AUTHKEY }}" | base64 -w0)
+          echo "TS_AUTHKEY=${{ secrets.TS_AUTHKEY }}" > /tmp/userdata.txt
           INSTANCE_ID=$(aws ec2 run-instances \
             --image-id ${{ secrets.EC2_AMI_ID }} \
             --instance-type t3.micro \
             --instance-market-options '{"MarketType":"spot"}' \
             --subnet-id ${{ secrets.EC2_SUBNET_ID }} \
             --security-group-ids ${{ secrets.EC2_SG_ID }} \
-            --user-data "$USERDATA" \
+            --user-data file:///tmp/userdata.txt \
+            --metadata-options "HttpTokens=optional" \
             --tag-specifications 'ResourceType=instance,Tags=[{Key=Name,Value=ci-exit-node}]' \
             --query 'Instances[0].InstanceId' \
             --output text)
+          rm -f /tmp/userdata.txt
           echo "instance_id=$INSTANCE_ID" >> $GITHUB_OUTPUT
           echo "Launched $INSTANCE_ID, waiting for status ok..."
           aws ec2 wait instance-status-ok --instance-ids $INSTANCE_ID

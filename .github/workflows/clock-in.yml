@@ -47,20 +47,31 @@ jobs:
 
       - name: Launch exit node (spot)
         id: ec2
+        env:
+          TS_AUTHKEY: ${{ secrets.TS_AUTHKEY }}
         run: |
-          echo "TS_AUTHKEY=${{ secrets.TS_AUTHKEY }}" > /tmp/userdata.txt
+          cat > /tmp/userdata.sh << UDEOF
+          #!/bin/bash
+          sysctl -w net.ipv4.ip_forward=1
+          sysctl -w net.ipv6.conf.all.forwarding=1
+          for i in \$(seq 1 30); do
+            tailscale status >/dev/null 2>&1 && break
+            sleep 2
+          done
+          tailscale up --authkey="${TS_AUTHKEY}" --hostname=ci-exit-node --advertise-exit-node
+          UDEOF
           INSTANCE_ID=$(aws ec2 run-instances \
             --image-id ${{ secrets.EC2_AMI_ID }} \
             --instance-type t3.micro \
             --instance-market-options '{"MarketType":"spot"}' \
             --subnet-id ${{ secrets.EC2_SUBNET_ID }} \
             --security-group-ids ${{ secrets.EC2_SG_ID }} \
-            --user-data file:///tmp/userdata.txt \
+            --user-data file:///tmp/userdata.sh \
             --metadata-options "HttpTokens=optional" \
             --tag-specifications 'ResourceType=instance,Tags=[{Key=Name,Value=ci-exit-node}]' \
             --query 'Instances[0].InstanceId' \
             --output text)
-          rm -f /tmp/userdata.txt
+          rm -f /tmp/userdata.sh
           echo "instance_id=$INSTANCE_ID" >> $GITHUB_OUTPUT
           echo "Launched $INSTANCE_ID, waiting for status ok..."
           aws ec2 wait instance-status-ok --instance-ids $INSTANCE_ID

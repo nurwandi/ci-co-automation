@@ -1,202 +1,68 @@
-# Talenta HR Automation
+# Talenta HR Attendance Automation
 
-Automated clock in/out for [Talenta HR](https://hr.talenta.co) using Playwright with stealth browser techniques.
+Automated clock in/out for [Talenta HR](https://hr.talenta.co) using Playwright with stealth browser.
 
-## Overview
-
-This tool automates daily attendance on Talenta HR by launching a stealth Chromium browser, logging in with your credentials, and clicking the Clock In / Clock Out button. It includes human-like interaction patterns (hover, random delays, fallback click strategies) to avoid bot detection.
-
-## Project Structure
+## How It Works
 
 ```
-├── .github/
-│   └── workflows/
-│       ├── clock-in.yml       # GitHub Actions workflow for clock in
-│       └── clock-out.yml      # GitHub Actions workflow for clock out
-├── src/
-│   ├── attendance/
-│   │   ├── auth.js            # Login handler (auto-detects if already logged in)
-│   │   ├── clock-in.js        # Clock in script with retry logic
-│   │   └── clock-out.js       # Clock out script with retry logic
-│   ├── browser/
-│   │   └── stealth-utils.js   # Stealth browser launcher & human-like click helpers
-│   └── core/
-│       └── logger.js          # Timestamped logger using consola
-├── scripts/
-│   ├── clock-in.bat           # Batch wrapper for clock in
-│   ├── clock-out.bat          # Batch wrapper for clock out
-│   └── setup-schedule.ps1     # PowerShell script to register Windows scheduled tasks
-├── .env.example               # Credential template
-├── setup-task-scheduler.md    # Manual Task Scheduler setup guide
-└── package.json
+cron-job.org (08:00 & 18:00 WIB, Mon-Fri)
+  → triggers GitHub Actions via workflow_dispatch
+    → launches EC2 spot (Jakarta) as Tailscale VPN exit node
+      → runner traffic routed through Indonesian IP
+        → Playwright browser logs in & clicks Clock In/Out
+          → Discord notification sent
+            → EC2 terminated
 ```
 
-## Features
-
-- Stealth Chromium browser with anti-detection patches (webdriver flag, fake plugins, chrome runtime spoofing)
-- WebRTC leak protection (disables ICE servers and blocks real IP exposure)
-- Hardened geolocation override via `addInitScript` injection (overrides `getCurrentPosition` and `watchPosition`)
-- Human-like interactions: hover before click, randomized delays, scroll into view
-- Multi-fallback click strategy (normal → force → manual event dispatch)
-- Geolocation spoofing (Jakarta, Indonesia) with `id-ID` locale and `Asia/Jakarta` timezone
-- Tailscale VPN exit node in CI to route traffic through an Indonesian IP
-- Auto-login with session detection (skips login if already authenticated)
-- Retry logic (up to 3 attempts) with error screenshots on final failure
-- API response interception to confirm attendance was recorded
-- Timestamped console logging via consola
-- GitHub Actions workflows with external cron trigger (cron-job.org) for reliable scheduling
-- Windows Task Scheduler integration as local alternative
-
-## Requirements
-
-- Node.js v16+
-- pnpm (or npm)
-- Stable internet connection
-- Tailscale account with OAuth client (for GitHub Actions VPN routing — see [setup](#4-setup-tailscale-vpn-for-ci))
-
-## Setup
-
-### 1. Install dependencies
+## Quick Start (Local)
 
 ```bash
 pnpm install
+cp .env.example .env    # fill in TALENTA_EMAIL and TALENTA_PASSWORD
+pnpm run clock-in       # or: pnpm run clock-out
 ```
 
-Playwright browsers are installed automatically via the `postinstall` script. To install them manually:
+## GitHub Actions Setup
 
-```bash
-pnpm run install-browsers
-```
+### 1. Secrets
 
-### 2. Configure credentials
+| Secret | Description |
+|---|---|
+| `TALENTA_EMAIL` | Talenta account email |
+| `TALENTA_PASSWORD` | Talenta account password |
+| `DISCORD_WEBHOOK_URL` | Discord webhook URL for notifications |
+| `AWS_ROLE_ARN` | IAM role ARN (OIDC, for EC2 spot) |
+| `TS_AUTHKEY` | Tailscale auth key (reusable, ephemeral, tag:ci) |
+| `EC2_AMI_ID` | AMI ID with Tailscale pre-installed (ap-southeast-3) |
+| `EC2_SUBNET_ID` | Public subnet in ap-southeast-3 |
+| `EC2_SG_ID` | Security group (outbound all, inbound none) |
 
-```bash
-copy .env.example .env
-```
+### 2. Variables
 
-Edit `.env` with your Talenta account:
+| Variable | Description |
+|---|---|
+| `CRON_ENABLED` | Set `true` to allow cron triggers |
+| `TS_KEY_GENERATED_DATE` | Auth key generation date (YYYY-MM-DD) |
+| `REMINDER_EMAIL` | Email for key expiry reminders |
 
-```ini
-TALENTA_EMAIL=your-email@example.com
-TALENTA_PASSWORD=your-password
-```
+### 3. Cron Trigger (cron-job.org)
 
-### 3. Test manually
+Create 2 jobs that POST to GitHub API:
 
-```bash
-# Run clock in
-pnpm run clock-in
+- **Clock In:** `0 8 * * 1-5` → `.../workflows/clock-in.yml/dispatches`
+- **Clock Out:** `0 18 * * 1-5` → `.../workflows/clock-out.yml/dispatches`
 
-# Run clock out
-pnpm run clock-out
-```
+Headers: `Authorization: Bearer <GITHUB_PAT>`, `Accept: application/vnd.github+json`, `Content-Type: application/json`
+Body: `{"ref":"main"}`
 
-## Scheduling
+### 4. AWS Setup
 
-### GitHub Actions + cron-job.org (Recommended)
+- OIDC provider for `token.actions.githubusercontent.com`
+- IAM role with EC2 permissions (RunInstances, TerminateInstances, DescribeInstances, DescribeInstanceStatus, CreateTags) + `iam:CreateServiceLinkedRole` for Spot
+- EC2 AMI: Ubuntu 24.04 + Tailscale installed, init script enables IP forwarding and joins as exit node
 
-Workflows are split into 2 files: `clock-in.yml` and `clock-out.yml`. Both are triggered via `workflow_dispatch` — either manually from the GitHub Actions console or automatically via an external cron service.
+### 5. Tailscale Setup
 
-#### 1. Create a GitHub Fine-Grained Personal Access Token
-
-1. Go to [GitHub Settings > Fine-grained tokens](https://github.com/settings/tokens?type=beta)
-2. Click **Generate new token**
-3. Set the token name, e.g. `cron-attendance-trigger`
-4. Set expiration as needed (e.g. 90 days)
-5. Under **Repository access**, select **Only select repositories** → choose this repo
-6. Under **Permissions > Repository permissions**, set:
-   - `Actions`: Read and write
-   - `Contents`: Read-only
-7. Click **Generate token** and save it
-
-#### 2. Setup cron-job.org
-
-1. Create an account at [cron-job.org](https://cron-job.org)
-2. Create 2 cron jobs:
-
-**Clock In** (08:45 WIB = 01:45 UTC):
-
-- Title: `Talenta Clock In`
-- URL: `https://api.github.com/repos/{OWNER}/{REPO}/actions/workflows/clock-in.yml/dispatches`
-- Schedule: `45 1 * * 1-5` (Monday-Friday)
-- Request method: `POST`
-- Request headers:
-
-  ```text
-  Authorization: Bearer <GITHUB_PAT>
-  Accept: application/vnd.github+json
-  X-GitHub-Api-Version: 2022-11-28
-  ```
-
-- Request body:
-
-  ```json
-  {"ref": "main"}
-  ```
-
-**Clock Out** (18:05 WIB = 11:05 UTC):
-
-- Title: `Talenta Clock Out`
-- URL: `https://api.github.com/repos/{OWNER}/{REPO}/actions/workflows/clock-out.yml/dispatches`
-- Schedule: `5 11 * * 1-5` (Monday-Friday)
-- Same request method, headers, and body as above.
-
-> Replace `{OWNER}` and `{REPO}` with your GitHub username and repository name.
-
-#### 3. Setup Tailscale VPN for CI
-
-The GitHub Actions workflows route traffic through a Tailscale exit node so the runner's IP appears to be in Indonesia. This prevents IP-based blocking by Talenta.
-
-1. Create a [Tailscale](https://tailscale.com) account and set up a tailnet
-2. Add an exit node in Indonesia (e.g. a VPS or home device running Tailscale with `--advertise-exit-node`)
-3. Create an OAuth client in the [Tailscale admin console](https://login.tailscale.com/admin/settings/oauth) with the `tag:ci` tag
-4. Add the following secrets to your GitHub repository (**Settings > Secrets and variables > Actions > Secrets**):
-
-   | Secret | Description |
-   | --- | --- |
-   | `TS_OAUTH_CLIENT_ID` | Tailscale OAuth client ID |
-   | `TS_OAUTH_SECRET` | Tailscale OAuth client secret |
-   | `TS_EXIT_NODE` | Hostname or IP of your Tailscale exit node in Indonesia |
-
-The workflow includes a "Verify IP location" step that prints the runner's public IP and geolocation via `ipinfo.io` so you can confirm the VPN is working.
-
-#### 4. Holiday / leave control
-
-- Set the repository variable `CRON_ENABLED` to `false` in **Settings > Secrets and variables > Actions > Variables** to skip all cron triggers.
-- `workflow_dispatch` (manual trigger) still runs regardless of the `CRON_ENABLED` value.
-
-### Windows Task Scheduler (Alternative — Local)
-
-#### Automated setup (PowerShell)
-
-Run as Administrator:
-
-```powershell
-Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
-.\scripts\setup-schedule.ps1
-```
-
-This registers two daily Windows scheduled tasks:
-
-- **Talenta Clock In** at 08:55
-- **Talenta Clock Out** at 18:05
-
-#### Manual setup (Task Scheduler)
-
-See [setup-task-scheduler.md](setup-task-scheduler.md) for step-by-step instructions.
-
-## Troubleshooting
-
-| Issue | Solution |
-| --- | --- |
-| Login timeout | Check your `.env` credentials and internet connection |
-| Clock In/Out button not found | Talenta UI may have changed; inspect the page and update selectors |
-| Task doesn't run on schedule | Ensure the computer is awake (not in sleep/hibernate) at the scheduled time |
-| Bot detection | The stealth utils should handle this, but Talenta may update their detection; check `stealth-utils.js` |
-| CI IP location is wrong | Verify Tailscale exit node is running and `TS_EXIT_NODE` secret is correct; check the "Verify IP location" step output in the workflow run |
-| Script errors | Check the error screenshot (`error-clock-in.png` / `error-clock-out.png`) saved in the project root |
-
-## Notes
-
-- The batch scripts assume the project is located at `D:\ci-co-automation`. Update the path in `scripts/clock-in.bat` and `scripts/clock-out.bat` if your project is in a different directory.
-- The browser launches in headed mode (`headless: false`) so you can observe the automation. Change to `headless: true` in `stealth-utils.js` for silent operation.
+- Auth key: reusable, ephemeral, tag `tag:ci`, 90-day expiry
+- ACL: `"autoApprovers": {"exitNode": ["tag:ci"]}`
+- Key rotation reminder workflow runs daily, notifies 15 days before expiry

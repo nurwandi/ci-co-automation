@@ -1,0 +1,108 @@
+name: Tailscale Key Expiry Reminder
+
+on:
+  schedule:
+    - cron: "0 1 * * *" # Daily at 08:00 WIB
+  workflow_dispatch: # Manual trigger for testing
+
+jobs:
+  check-expiry:
+    runs-on: ubuntu-latest
+    env:
+      TZ: Asia/Jakarta
+    steps:
+      - name: Check key expiry
+        id: check
+        run: |
+          GENERATED="${{ vars.TS_KEY_GENERATED_DATE }}"
+          EXPIRY_DAYS=90
+
+          if [ -z "$GENERATED" ]; then
+            echo "::error::TS_KEY_GENERATED_DATE variable not set"
+            exit 1
+          fi
+
+          GENERATED_EPOCH=$(date -d "$GENERATED" +%s)
+          EXPIRY_EPOCH=$((GENERATED_EPOCH + EXPIRY_DAYS * 86400))
+          NOW_EPOCH=$(date +%s)
+          DAYS_LEFT=$(( (EXPIRY_EPOCH - NOW_EPOCH) / 86400 ))
+          EXPIRY_DATE=$(date -d "@$EXPIRY_EPOCH" +"%d/%m/%Y")
+
+          echo "days_left=$DAYS_LEFT" >> $GITHUB_OUTPUT
+          echo "expiry_date=$EXPIRY_DATE" >> $GITHUB_OUTPUT
+          echo "Key generated: $GENERATED"
+          echo "Key expires: $EXPIRY_DATE"
+          echo "Days left: $DAYS_LEFT"
+
+          if [ "$DAYS_LEFT" -le 15 ]; then
+            echo "should_notify=true" >> $GITHUB_OUTPUT
+          else
+            echo "should_notify=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Notify Discord
+        if: steps.check.outputs.should_notify == 'true'
+        env:
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          DAYS_LEFT: ${{ steps.check.outputs.days_left }}
+          EXPIRY_DATE: ${{ steps.check.outputs.expiry_date }}
+        run: |
+          if [ "$DAYS_LEFT" -le 0 ]; then
+            EMOJI="🚨"; TITLE="Tailscale Auth Key EXPIRED!"
+            COLOR=15548997; URGENCY="Key sudah expired. Segera generate ulang!"
+          elif [ "$DAYS_LEFT" -le 5 ]; then
+            EMOJI="🔴"; TITLE="Tailscale Auth Key Expiring Soon!"
+            COLOR=15548997; URGENCY="URGENT — Key expire dalam $DAYS_LEFT hari!"
+          elif [ "$DAYS_LEFT" -le 10 ]; then
+            EMOJI="🟡"; TITLE="Tailscale Auth Key Expiring"
+            COLOR=16776960; URGENCY="Key expire dalam $DAYS_LEFT hari."
+          else
+            EMOJI="🟠"; TITLE="Tailscale Auth Key Reminder"
+            COLOR=16750848; URGENCY="Key expire dalam $DAYS_LEFT hari."
+          fi
+
+          JSON=$(cat <<EOF
+          {
+            "content": "<@710595837067264082>",
+            "embeds": [{
+              "title": "${EMOJI} ${TITLE}",
+              "color": ${COLOR},
+              "fields": [
+                {"name": "Days Left", "value": "${DAYS_LEFT}", "inline": true},
+                {"name": "Expiry Date", "value": "${EXPIRY_DATE}", "inline": true},
+                {"name": "Urgency", "value": "${URGENCY}", "inline": false}
+              ],
+              "footer": {"text": "Generate new key at Tailscale Admin Console, lalu update secret TS_AUTHKEY dan variable TS_KEY_GENERATED_DATE."}
+            }]
+          }
+          EOF
+          )
+
+          curl -s -X POST -H "Content-Type: application/json" -d "$JSON" "$DISCORD_WEBHOOK_URL"
+
+      - name: Notify Email
+        if: steps.check.outputs.should_notify == 'true'
+        uses: dawidd6/action-send-mail@v3
+        with:
+          server_address: smtp.gmail.com
+          server_port: 465
+          secure: true
+          username: ${{ secrets.SMTP_USERNAME }}
+          password: ${{ secrets.SMTP_PASSWORD }}
+          subject: "⚠️ Tailscale Auth Key expires in ${{ steps.check.outputs.days_left }} days"
+          to: ${{ vars.REMINDER_EMAIL }}
+          from: ${{ secrets.SMTP_USERNAME }}
+          body: |
+            Tailscale Auth Key Expiry Reminder
+            ===================================
+
+            Days left: ${{ steps.check.outputs.days_left }}
+            Expiry date: ${{ steps.check.outputs.expiry_date }}
+
+            Action required:
+            1. Go to Tailscale Admin Console → Settings → Keys
+            2. Generate new auth key (Reusable, Ephemeral, tag:ci)
+            3. Update GitHub secret TS_AUTHKEY
+            4. Update GitHub variable TS_KEY_GENERATED_DATE to today's date
+
+            https://login.tailscale.com/admin/settings/keys

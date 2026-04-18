@@ -36,15 +36,49 @@ jobs:
       - name: Install Playwright browsers
         run: pnpm exec playwright install --with-deps chromium
 
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ap-southeast-3
+
+      - name: Launch exit node (spot)
+        id: ec2
+        run: |
+          USERDATA=$(echo "TS_AUTHKEY=${{ secrets.TS_AUTHKEY }}" | base64 -w0)
+          INSTANCE_ID=$(aws ec2 run-instances \
+            --image-id ${{ secrets.EC2_AMI_ID }} \
+            --instance-type t3.micro \
+            --instance-market-options '{"MarketType":"spot"}' \
+            --subnet-id ${{ secrets.EC2_SUBNET_ID }} \
+            --security-group-ids ${{ secrets.EC2_SG_ID }} \
+            --user-data "$USERDATA" \
+            --tag-specifications 'ResourceType=instance,Tags=[{Key=Name,Value=ci-exit-node}]' \
+            --query 'Instances[0].InstanceId' \
+            --output text)
+          echo "instance_id=$INSTANCE_ID" >> $GITHUB_OUTPUT
+          echo "Launched $INSTANCE_ID, waiting for status ok..."
+          aws ec2 wait instance-status-ok --instance-ids $INSTANCE_ID
+          echo "Instance $INSTANCE_ID is ready"
+
       - name: Connect to Tailscale
         uses: tailscale/github-action@v4
         with:
-          oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
-          oauth-secret: ${{ secrets.TS_OAUTH_SECRET }}
+          authkey: ${{ secrets.TS_AUTHKEY }}
           tags: tag:ci
 
-      - name: Route traffic through exit node
-        run: sudo -E tailscale set --exit-node=${{ secrets.TS_EXIT_NODE }} --accept-routes
+      - name: Wait for exit node and route traffic
+        run: |
+          echo "Waiting for exit node to appear..."
+          for i in $(seq 1 30); do
+            if tailscale status | grep -q "ci-exit-node"; then
+              echo "Exit node found"
+              break
+            fi
+            echo "Attempt $i/30 — waiting 5s..."
+            sleep 5
+          done
+          sudo -E tailscale set --exit-node=ci-exit-node --accept-routes
 
       - name: Verify IP location
         run: curl -s https://ipinfo.io/json | jq '{ip, city, region, country}'
@@ -150,4 +184,12 @@ jobs:
             echo "::warning::Discord notification failed (HTTP ${HTTP_CODE}): ${BODY}"
           else
             echo "Discord notification sent successfully"
+          fi
+
+      - name: Terminate exit node
+        if: always()
+        run: |
+          if [ -n "${{ steps.ec2.outputs.instance_id }}" ]; then
+            aws ec2 terminate-instances --instance-ids ${{ steps.ec2.outputs.instance_id }}
+            echo "Terminated ${{ steps.ec2.outputs.instance_id }}"
           fi

@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project
 
-Talenta HR attendance automation. Launches a stealth Playwright Chromium browser, logs into hr.talenta.co, and clicks Clock In or Clock Out. Runs locally via Windows Task Scheduler or remotely via GitHub Actions triggered by cron-job.org.
+Talenta HR attendance automation. Launches a stealth Playwright Chromium browser, logs into hr.talenta.co, and clicks Clock In or Clock Out. Runs locally or remotely via GitHub Actions triggered by cron-job.org.
 
 ## Commands
 
@@ -29,13 +29,16 @@ All source is ES Modules (`"type": "module"` in package.json).
 - `src/core/logger.js` — `createLogger(tag)` wraps consola with custom `DD/MM/YYYY HH:mm:ss` timestamps.
 
 **GitHub Actions workflows** (`.github/workflows/clock-in.yml`, `clock-out.yml`):
-- Triggered only via `workflow_dispatch` (external cron service sends POST to GitHub API)
-- Tailscale VPN exit node routes runner traffic through an Indonesian IP (`tailscale/github-action@v4` with `--exit-node`); IP verified via `ipinfo.io`
-- `TZ: Asia/Jakarta` env var ensures date commands use WIB
-- Geolocation varies by day of week: Mon/Fri use alternate coordinates, Tue-Thu use default Jakarta office
-- `CRON_ENABLED` repo variable gates cron-triggered runs; manual dispatch always runs
-- Runs headless on ubuntu-latest with pnpm 9 + Node 20
-- Error screenshots uploaded as artifacts (3-day retention)
+- Triggered via `workflow_dispatch` (cron-job.org sends POST to GitHub API)
+- Spins up EC2 spot instance (t3.micro) in ap-southeast-3 (Jakarta) as Tailscale exit node
+- AWS auth via OIDC (no static credentials)
+- Runner joins Tailscale, routes traffic through EC2 exit node → Indonesian IP
+- Random delay 3-10 min, geolocation varies by day (Mon/Fri = home, Tue-Thu = office)
+- Discord webhook notification on success/failure
+- EC2 auto-terminated after completion
+
+**Tailscale key reminder** (`.github/workflows/tailscale-key-reminder.yml`):
+- Runs daily, notifies Discord + email 15 days before 90-day auth key expiry
 
 ## Environment Variables
 
@@ -44,9 +47,17 @@ Loaded from `.env` via dotenv (see `.env.example`):
 - `HEADLESS` — `"true"` for headless mode (GitHub Actions sets this; local default is `false`)
 - `GEO_LAT` / `GEO_LNG` — geolocation override (defaults to Jakarta office coords)
 
-GitHub Actions secrets (for Tailscale VPN):
-- `TS_OAUTH_CLIENT_ID` / `TS_OAUTH_SECRET` — Tailscale OAuth client credentials
-- `TS_EXIT_NODE` — Tailscale exit node hostname/IP in Indonesia
+GitHub Actions secrets:
+- `TALENTA_EMAIL` / `TALENTA_PASSWORD` — Talenta credentials
+- `DISCORD_WEBHOOK_URL` — Discord webhook for notifications
+- `AWS_ROLE_ARN` — IAM role ARN for OIDC
+- `TS_AUTHKEY` — Tailscale auth key (reusable, ephemeral, tag:ci, 90-day expiry)
+- `EC2_AMI_ID` / `EC2_SUBNET_ID` / `EC2_SG_ID` — EC2 resources in ap-southeast-3
+
+GitHub Actions variables:
+- `CRON_ENABLED` — `true` to allow cron triggers
+- `TS_KEY_GENERATED_DATE` — date auth key was generated (YYYY-MM-DD)
+- `REMINDER_EMAIL` — email for key expiry notifications
 
 ## Conventions
 

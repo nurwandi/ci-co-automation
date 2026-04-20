@@ -149,10 +149,13 @@ jobs:
         run: |
           if [ "$JOB_STATUS" = "success" ]; then
             EMOJI="✅"; LABEL="Successful"; COLOR=5763719
+            MSG="Clock Out successful at ${CLOCK_TIME} WIB <@${{ vars.DISCORD_USER_ID }}>"
           elif [ "$JOB_STATUS" = "cancelled" ]; then
             EMOJI="⚠️"; LABEL="Cancelled"; COLOR=16776960
+            MSG="Clock Out cancelled <@${{ vars.DISCORD_USER_ID }}>"
           else
             EMOJI="❌"; LABEL="Failed!"; COLOR=15548997
+            MSG="Clock Out failed at ${CLOCK_TIME} WIB! Check logs <@${{ vars.DISCORD_USER_ID }}>"
           fi
 
           ELAPSED=$(( $(date +%s) - START_TIME ))
@@ -165,7 +168,7 @@ jobs:
 
           JSON=$(cat <<EOF
           {
-            "content": "<@710595837067264082>",
+            "content": "${MSG}",
             "embeds": [{
               "title": "${EMOJI} Clock Out ${LABEL}",
               "url": "${RUN_URL}",

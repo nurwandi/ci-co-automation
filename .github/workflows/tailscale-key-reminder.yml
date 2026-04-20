@@ -63,7 +63,7 @@ jobs:
 
           JSON=$(cat <<EOF
           {
-            "content": "<@710595837067264082>",
+            "content": "<@${{ vars.DISCORD_USER_ID }}>",
             "embeds": [{
               "title": "${EMOJI} ${TITLE}",
               "color": ${COLOR},

@@ -79,30 +79,3 @@ jobs:
           )
 
           curl -s -X POST -H "Content-Type: application/json" -d "$JSON" "$DISCORD_WEBHOOK_URL"
-
-      - name: Notify Email
-        if: steps.check.outputs.should_notify == 'true'
-        uses: dawidd6/action-send-mail@v3
-        with:
-          server_address: smtp.gmail.com
-          server_port: 465
-          secure: true
-          username: ${{ secrets.SMTP_USERNAME }}
-          password: ${{ secrets.SMTP_PASSWORD }}
-          subject: "⚠️ Tailscale Auth Key expires in ${{ steps.check.outputs.days_left }} days"
-          to: ${{ vars.REMINDER_EMAIL }}
-          from: ${{ secrets.SMTP_USERNAME }}
-          body: |
-            Tailscale Auth Key Expiry Reminder
-            ===================================
-
-            Days left: ${{ steps.check.outputs.days_left }}
-            Expiry date: ${{ steps.check.outputs.expiry_date }}
-
-            Action required:
-            1. Go to Tailscale Admin Console → Settings → Keys
-            2. Generate new auth key (Reusable, Ephemeral, tag:ci)
-            3. Update GitHub secret TS_AUTHKEY
-            4. Update GitHub variable TS_KEY_GENERATED_DATE to today's date
-
-            https://login.tailscale.com/admin/settings/keys

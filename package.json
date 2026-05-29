@@ -6,8 +6,7 @@
   "scripts": {
     "clock-in": "node src/attendance/clock-in.js",
     "clock-out": "node src/attendance/clock-out.js",
-    "postinstall": "playwright install",
-    "install-browsers": "playwright install"
+    "install-browsers": "playwright install chromium"
   },
   "dependencies": {
     "consola": "^3.4.2",

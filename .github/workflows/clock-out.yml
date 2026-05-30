@@ -48,9 +48,19 @@ jobs:
       - name: Launch exit node (spot)
         id: ec2
         env:
-          TS_AUTHKEY: ${{ secrets.TS_AUTHKEY }}
+          TS_OAUTH_CLIENT_ID: ${{ secrets.TS_OAUTH_CLIENT_ID }}
+          TS_OAUTH_SECRET: ${{ secrets.TS_OAUTH_SECRET }}
         run: |
-          echo "TS_AUTHKEY=${TS_AUTHKEY}" > /tmp/userdata.txt
+          EC2_AUTHKEY=$(curl -s -u "${TS_OAUTH_CLIENT_ID}:${TS_OAUTH_SECRET}" \
+            -X POST "https://api.tailscale.com/api/v2/tailnet/-/keys" \
+            -H "Content-Type: application/json" \
+            -d '{"capabilities":{"devices":{"create":{"reusable":false,"ephemeral":true,"tags":["tag:ci"]}}},"expirySeconds":600}' \
+            | jq -r '.key')
+          if [ -z "$EC2_AUTHKEY" ] || [ "$EC2_AUTHKEY" = "null" ]; then
+            echo "::error::Failed to generate auth key from Tailscale API"
+            exit 1
+          fi
+          echo "TS_AUTHKEY=${EC2_AUTHKEY}" > /tmp/userdata.txt
           INSTANCE_ID=$(aws ec2 run-instances \
             --image-id ${{ secrets.EC2_AMI_ID }} \
             --instance-type t3.micro \
@@ -71,7 +81,8 @@ jobs:
       - name: Connect to Tailscale
         uses: tailscale/github-action@v4
         with:
-          authkey: ${{ secrets.TS_AUTHKEY }}
+          oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
+          oauth-secret: ${{ secrets.TS_OAUTH_SECRET }}
           tags: tag:ci
 
       - name: Wait for exit node and route traffic

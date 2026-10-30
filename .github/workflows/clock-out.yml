@@ -117,18 +117,9 @@ jobs:
       - name: Determine geolocation
         id: geo
         run: |
-          DOW=$(date -u +%u)
-          if [ "$DOW" = "1" ] || [ "$DOW" = "5" ]; then
-            echo "Monday/Friday — using alternate location"
-            echo "lat=-6.2118931" >> $GITHUB_OUTPUT
-            echo "lng=106.8264782" >> $GITHUB_OUTPUT
-            echo "label=Home (Mon/Fri)" >> $GITHUB_OUTPUT
-          else
-            echo "Tue-Thu — using default location"
-            echo "lat=-6.1993335" >> $GITHUB_OUTPUT
-            echo "lng=106.7623687" >> $GITHUB_OUTPUT
-            echo "label=Default Office (Tue-Thu)" >> $GITHUB_OUTPUT
-          fi
+          echo "lat=-6.2249462" >> $GITHUB_OUTPUT
+          echo "lng=106.8145192" >> $GITHUB_OUTPUT
+          echo "label=Office (Mon-Fri)" >> $GITHUB_OUTPUT
 
       - name: Record clock time
         id: clock
